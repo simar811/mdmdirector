@@ -136,12 +136,40 @@ func InfoRequestInterval() int {
 	return flag.Lookup("info-request-interval").Value.(flag.Getter).Get().(int)
 }
 
+func EnrollWebhookURL() string {
+	return strings.TrimRight(flag.Lookup("enroll-webhook-url").Value.(flag.Getter).Get().(string), "/")
+}
+
+func EnrollWebhookToken() string {
+	return flag.Lookup("enroll-webhook-token").Value.(flag.Getter).Get().(string)
+}
+
+func EnableReEnrollViaWebhook() bool {
+	return flag.Lookup("enable-reenroll-via-webhook").Value.(flag.Getter).Get().(bool)
+}
+
+func AcmeCertIssuer() string {
+	return flag.Lookup("acme-cert-issuer").Value.(flag.Getter).Get().(string)
+}
+
+func AcmeCertMinValidity() int {
+	return flag.Lookup("acme-cert-min-validity").Value.(flag.Getter).Get().(int)
+}
+
 func NanoMDMURL() string {
 	return strings.TrimRight(flag.Lookup("nanomdm-url").Value.(flag.Getter).Get().(string), "/")
 }
 
+func NanoMDMAPIKey() string {
+	return flag.Lookup("nanomdm-api-key").Value.(flag.Getter).Get().(string)
+}
+
 func UseDDM() bool {
 	return flag.Lookup("use-ddm").Value.(flag.Getter).Get().(bool)
+}
+
+func UseDDMPackages() bool {
+	return flag.Lookup("use-ddm-packages").Value.(flag.Getter).Get().(bool)
 }
 
 func DDMDeclarationPrefix() string {

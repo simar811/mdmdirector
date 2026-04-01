@@ -96,6 +96,21 @@ var OnceIn int
 
 var InfoRequestInterval int
 
+// AcmeCertIssuer is the issuer of the ACME certificate
+var AcmeCertIssuer string
+
+// AcmeCertMinValidity is the minimum number of days before ACME cert expiry to trigger re-enrollment
+var AcmeCertMinValidity int
+
+// EnrollWebhookURL is the full URL of the enrollment profile webhook endpoint
+var EnrollWebhookURL string
+
+// EnrollWebhookToken is the Bearer token for the enrollment profile webhook
+var EnrollWebhookToken string
+
+// EnableReEnrollViaWebhook enables fetching enrollment profiles via a remote webhook for re-enrollment
+var EnableReEnrollViaWebhook bool
+
 // KMFDDMURL is the base URL for the KMFDDM server
 var KMFDDMURL string
 
@@ -105,8 +120,14 @@ var KMFDDMAPIKey string
 // NanoMDMURL is the externally reachable URL of the NanoMDM server
 var NanoMDMURL string
 
+// NanoMDMAPIKey is the API key for the NanoMDM server
+var NanoMDMAPIKey string
+
 // UseDDM controls whether profile management uses DDM instead of InstallProfile
 var UseDDM bool
+
+// UseDDMPackages controls whether package installation uses DDM instead of InstallApplication commands
+var UseDDMPackages bool
 
 // DDMDeclarationPrefix is the organisation-specific reverse-DNS prefix for DDM declaration identifiers
 var DDMDeclarationPrefix string
@@ -265,6 +286,18 @@ func main() {
 		"The number of days at which the SCEP certificate has remaining before the enrollment profile is re-sent.",
 	)
 	flag.StringVar(
+		&AcmeCertIssuer,
+		"acme-cert-issuer",
+		env.String("ACME_CERT_ISSUER", ""),
+		"The issuer of your ACME certificate. When set, ACME cert expiry will also be checked.",
+	)
+	flag.IntVar(
+		&AcmeCertMinValidity,
+		"acme-cert-min-validity",
+		env.Int("ACME_CERT_MIN_VALIDITY", 180),
+		"The number of days at which the ACME certificate has remaining before the enrollment profile is re-sent.",
+	)
+	flag.StringVar(
 		&EnrollmentProfile,
 		"enrollment-profile",
 		env.String("ENROLLMENT_PROFILE", ""),
@@ -290,6 +323,24 @@ func main() {
 		"Number of minutes to wait between issuing information commands",
 	)
 	flag.StringVar(
+		&EnrollWebhookURL,
+		"enroll-webhook-url",
+		env.String("ENROLL_WEBHOOK_URL", ""),
+		"URL of the enrollment profile webhook endpoint",
+	)
+	flag.StringVar(
+		&EnrollWebhookToken,
+		"enroll-webhook-token",
+		env.String("ENROLL_WEBHOOK_TOKEN", ""),
+		"Bearer token for the enrollment profile webhook",
+	)
+	flag.BoolVar(
+		&EnableReEnrollViaWebhook,
+		"enable-reenroll-via-webhook",
+		env.Bool("ENABLE_REENROLL_VIA_WEBHOOK", false),
+		"Enable fetching the enrollment profile from a remote webhook for re-enrollment",
+	)
+	flag.StringVar(
 		&KMFDDMURL,
 		"kmfddm-url",
 		env.String("KMFDDM_URL", ""),
@@ -305,13 +356,25 @@ func main() {
 		&NanoMDMURL,
 		"nanomdm-url",
 		env.String("NANOMDM_URL", ""),
-		"NanoMDM server URL",
+		"NanoMDM server URL (required if mdm-server-type=nanomdm)",
+	)
+	flag.StringVar(
+		&NanoMDMAPIKey,
+		"nanomdm-api-key",
+		env.String("NANOMDM_API_KEY", ""),
+		"NanoMDM server API key (required if mdm-server-type=nanomdm)",
 	)
 	flag.BoolVar(
 		&UseDDM,
 		"use-ddm",
 		env.Bool("USE_DDM", false),
 		"Enable DDM profile management via KMFDDM instead of InstallProfile commands",
+	)
+	flag.BoolVar(
+		&UseDDMPackages,
+		"use-ddm-packages",
+		env.Bool("USE_DDM_PACKAGES", false),
+		"Enable DDM package management via KMFDDM instead of InstallApplication commands",
 	)
 	flag.StringVar(
 		&DDMDeclarationPrefix,
@@ -344,14 +407,6 @@ func main() {
 		})
 	}
 
-	if MicroMDMURL == "" {
-		log.Fatal("MicroMDM Server URL missing. Exiting.")
-	}
-
-	if MicroMDMAPIKey == "" {
-		log.Fatal("MicroMDM API Key missing. Exiting.")
-	}
-
 	if BasicAuthPass == "" {
 		log.Fatal("Basic Auth password missing. Exiting.")
 	}
@@ -365,15 +420,46 @@ func main() {
 		log.Fatal("loglevel value is not one of debug, info, warn or error.")
 	}
 
-	if UseDDM {
+	switch MDMServerType {
+	case string(mdm.ServerTypeMicroMDM):
+		if MicroMDMURL == "" {
+			log.Fatal("MicroMDM Server URL missing. Exiting.")
+		}
+		if MicroMDMAPIKey == "" {
+			log.Fatal("MicroMDM API Key missing. Exiting.")
+		}
+	case string(mdm.ServerTypeNanoMDM):
+		if NanoMDMURL == "" {
+			log.Fatal("NanoMDM Server URL missing. Exiting.")
+		}
+		if NanoMDMAPIKey == "" {
+			log.Fatal("NanoMDM API Key missing. Exiting.")
+		}
+	default:
+		log.Fatalf("Unknown MDM server type: %s. Must be 'micromdm' or 'nanomdm'. Exiting.", MDMServerType)
+	}
+
+	if EnableReEnrollViaWebhook {
+		if EnrollWebhookURL == "" {
+			log.Fatal("ENROLL_WEBHOOK_URL is required when --enable-reenroll-via-webhook is set")
+		}
+		if EnrollWebhookToken == "" {
+			log.Fatal("ENROLL_WEBHOOK_TOKEN is required when --enable-reenroll-via-webhook is set")
+		}
+		log.Infof("Using enrollment profile webhook at %s", EnrollWebhookURL)
+	} else if EnrollmentProfile != "" {
+		log.Infof("Using local enrollment profile at %s", EnrollmentProfile)
+	}
+
+	if UseDDM || UseDDMPackages {
+		if MDMServerType != string(mdm.ServerTypeNanoMDM) {
+			log.Fatal("DDM requires mdm-server-type=nanomdm. Exiting.")
+		}
 		if KMFDDMURL == "" {
 			log.Fatal("KMFDDM URL is required when DDM is enabled. Exiting.")
 		}
 		if KMFDDMAPIKey == "" {
 			log.Fatal("KMFDDM API Key is required when DDM is enabled. Exiting.")
-		}
-		if NanoMDMURL == "" {
-			log.Fatal("NanoMDM URL is required when DDM is enabled. Exiting.")
 		}
 		if DDMDeclarationPrefix == "" {
 			log.Fatal("DDM declaration prefix is required when DDM is enabled. Exiting.")
@@ -389,7 +475,7 @@ func main() {
 
 	// Initialize NanoMDM client only if configured to use NanoMDM
 	if MDMServerType == string(mdm.ServerTypeNanoMDM) {
-		mdm.InitClient(MicroMDMURL, MicroMDMAPIKey)
+		mdm.InitClient(NanoMDMURL, NanoMDMAPIKey)
 		director.InfoLogger(director.LogHolder{Message: "NanoMDM client initialized"})
 	} else {
 		director.InfoLogger(director.LogHolder{Message: "Using MicroMDM (default)"})
